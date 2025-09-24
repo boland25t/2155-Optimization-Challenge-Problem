@@ -1,4 +1,5 @@
 ## Linkage Synthesis Challenge Problem
+## test commit
 
 This challenge problem is focused on synthesizing planar linkage mechanisms such that a specific output curve is traced using the mechanism. For this project you are tasked with synthesizing linkage mechanisms to trace 6 different output shapes. Further you are tasked with synthesizing mechanisms such that the total material used for the mechanisms in minimized. 
 
