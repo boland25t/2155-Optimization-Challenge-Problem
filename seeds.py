@@ -4,16 +4,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Any, Callable
 import numpy as np
 
-# --- Dependency injection defaults (adapt these imports to your repo layout) ---
-try:
-    # If your project exposes these at these paths, great:
-    from LINKS.Optimization._MechanismRandomizer import MechanismRandomizer as _Randomizer
-    from LINKS.Optimization._Tools import Tools as _Tools
-except Exception:
-    # Fallback names (edit if your local package layout differs)
-    from _MechanismRandomizer import MechanismRandomizer as _Randomizer  # noqa: F401
-    from _Tools import Tools as _Tools  # noqa: F401
-
+from LINKS.Optimization._MechanismRandomizer import MechanismRandomizer as _Randomizer
+from LINKS.Optimization._Tools import Tools as _Tools
 
 @dataclass
 class SeederConfig:
@@ -181,3 +173,116 @@ class MechanismSeeder:
                     m["material"] = float(mat[i])
 
         return mechs
+
+    def generate_pool(self, n_total: int) -> list[dict]:
+        """
+        Curve-agnostic superset of mechanisms. No pre-eval, no target binding.
+        Returns a list of mechanism dicts as produced by _gen_one().
+        """
+        import copy
+
+        made = []
+        # Temporarily disable any curve-specific plumbing if your class keeps tools cached
+        prev_tools = getattr(self, "_tools", None)
+        if hasattr(self, "_tools"):
+            self._tools = None
+        try:
+            tries = 0
+            while len(made) < n_total:
+                tries += 1
+                try:
+                    m = self._gen_one()
+                    # ensure it's detached from any internal buffers
+                    made.append(copy.deepcopy(m))
+                except (RecursionError, RuntimeError, ValueError):
+                    # keep going; pool generation should be resilient
+                    continue
+                # optional: hard cap on pathological loops
+                if tries > n_total * 100:
+                    break
+            return made
+        finally:
+            if hasattr(self, "_tools"):
+                self._tools = prev_tools
+
+    def select_for_curve(
+        self,
+        pool: list[dict],
+        target_curve,
+        k: int,
+        strategy: str = "diverse_by_nodes",
+        annotate_metrics: bool = False,
+        rng_seed: int | None = None,
+    ) -> list[dict]:
+        """
+        Choose k mechanisms from the global pool to seed a given curve.
+        - Sets per-curve fields (e.g., target_joint) per mechanism.
+        - Optionally annotates quick metrics via a lightweight batch eval.
+        - strategy: "random" | "diverse_by_nodes"
+        """
+        import numpy as np, copy
+
+        if not pool:
+            return []
+
+        rng = np.random.default_rng(rng_seed)
+        # Work on copies so we never mutate the shared pool
+        candidates = [copy.deepcopy(m) for m in pool]
+
+        if strategy == "random":
+            idx = rng.choice(
+                len(candidates), size=min(k, len(candidates)), replace=False
+            )
+            chosen = [candidates[i] for i in idx]
+
+        elif strategy == "diverse_by_nodes":
+            # round-robin across node-count buckets to keep topological variety
+            from collections import defaultdict, deque
+
+            buckets = defaultdict(list)
+            for m in candidates:
+                n_nodes = int(
+                    m["x0"].shape[0]
+                )  # adapt if your dict stores size differently
+                buckets[n_nodes].append(m)
+            # shuffle each bucket
+            for kk in list(buckets.keys()):
+                rng.shuffle(buckets[kk])
+                buckets[kk] = deque(buckets[kk])
+
+            chosen = []
+            order = deque(sorted(buckets.keys()))
+            while len(chosen) < k and order:
+                key = order[0]
+                if buckets[key]:
+                    chosen.append(buckets[key].popleft())
+                    order.rotate(-1)
+                else:
+                    order.popleft()
+
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        # Per-curve attachment (minimal): pick an end joint as target unless you have a rule
+        for m in chosen:
+            n_nodes = int(m["x0"].shape[0])
+            m["target_joint"] = n_nodes - 1
+
+        # (Optional) annotate quick metrics so you can log/triage seeds before NSGA
+        if (
+            annotate_metrics
+            and hasattr(self, "_tools")
+            and self._tools is not None
+            and len(chosen) > 0
+        ):
+            try:
+                dists, mats = self._eval_batch(chosen, target_curve, target_joint=None)
+                for i, m in enumerate(chosen):
+                    m["distance"] = float(dists[i])
+                    if mats is not None:
+                        m["material"] = float(mats[i])
+            except Exception:
+                # metrics are best-effort; swallow errors to avoid blocking seeding
+                pass
+
+        return chosen

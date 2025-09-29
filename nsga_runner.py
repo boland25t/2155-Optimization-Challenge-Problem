@@ -15,12 +15,8 @@ from pymoo.termination import get_termination
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
-# LINKS imports (adjust pathing if needed)
-try:
-    from LINKS.Optimization._Tools import Tools
-    from LINKS.Optimization._Tools import PreprocessedBatch as _PreBatch
-except Exception:
-    from _Tools import Tools  # fallback
+from LINKS.Optimization._Tools import Tools
+from LINKS.Optimization._Tools import PreprocessedBatch as _PreBatch
 
 # Group seeds by number of joints (n = x0.shape[0]) to reduce first-time JAX compiles.
 def group_seeds_by_joint_count(seeds):
