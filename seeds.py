@@ -174,34 +174,95 @@ class MechanismSeeder:
 
         return mechs
 
-    def generate_pool(self, n_total: int) -> list[dict]:
+    def generate_pool(
+        self, n_total: int, show_progress: bool = True, desc: str = "Seeding pool"
+    ) -> list[dict]:
         """
         Curve-agnostic superset of mechanisms. No pre-eval, no target binding.
-        Returns a list of mechanism dicts as produced by _gen_one().
+        Shows a progress bar that advances when a mechanism is *accepted*.
         """
-        import copy
+        import copy, time
+
+        # ---- progress helper (tqdm if available; otherwise a no-op) ----
+        def _progress(total, desc):
+            if not show_progress:
+
+                class _Dummy:
+                    def update(self, n=1):
+                        pass
+
+                    def set_postfix(self, **kwargs):
+                        pass
+
+                    def close(self):
+                        pass
+
+                return _Dummy()
+            try:
+                from tqdm.auto import tqdm
+
+                return tqdm(total=total, desc=desc, leave=False, dynamic_ncols=True)
+            except Exception:
+
+                class _Dummy:
+                    def update(self, n=1):
+                        pass
+
+                    def set_postfix(self, **kwargs):
+                        pass
+
+                    def close(self):
+                        pass
+
+                return _Dummy()
 
         made = []
-        # Temporarily disable any curve-specific plumbing if your class keeps tools cached
+        tries = 0
+        accepted = 0
+
         prev_tools = getattr(self, "_tools", None)
         if hasattr(self, "_tools"):
-            self._tools = None
+            self._tools = None  # keep this curve-agnostic
+
+        pbar = _progress(n_total, desc)
+        t0 = time.time()
+
         try:
-            tries = 0
             while len(made) < n_total:
                 tries += 1
                 try:
                     m = self._gen_one()
-                    # ensure it's detached from any internal buffers
                     made.append(copy.deepcopy(m))
+                    accepted += 1
+                    pbar.update(1)
                 except (RecursionError, RuntimeError, ValueError):
-                    # keep going; pool generation should be resilient
-                    continue
-                # optional: hard cap on pathological loops
-                if tries > n_total * 100:
+                    # just a rejected try; keep going
+                    pass
+
+                # light telemetry every ~200 tries (or whenever accepted changes)
+                if tries % 200 == 0 or (accepted and accepted % 10 == 0):
+                    elapsed = max(1e-6, time.time() - t0)
+                    acc_rate = accepted / tries if tries else 0.0
+                    per_sec = accepted / elapsed
+                    pbar.set_postfix(
+                        accepted=accepted,
+                        tries=tries,
+                        acc_rate=f"{acc_rate:.2%}",
+                        eps=f"{per_sec:.1f}",
+                    )
+
+                # hard safety: don't spin forever if _gen_one() is pathological
+                if tries > n_total * 1000 and accepted == 0:
+                    raise RuntimeError(
+                        "Pool generation failed: 0 acceptances after excessive tries."
+                    )
+                if tries > n_total * 10000:
+                    # break but return what we have (partial pool)
                     break
+
             return made
         finally:
+            pbar.close()
             if hasattr(self, "_tools"):
                 self._tools = prev_tools
 
