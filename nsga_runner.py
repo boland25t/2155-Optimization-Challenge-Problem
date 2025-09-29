@@ -164,11 +164,14 @@ def _run_nsga_for_seed(mech: Dict[str, Any], target_curve: np.ndarray, cfg: NSGA
     algo = NSGA2(pop_size=cfg.pop_size, sampling=sampling, crossover=cx, mutation=mut, eliminate_duplicates=True)
     termination = get_termination("n_gen", cfg.n_gen)
 
-    # set RNG for reproducibility
+    # set RNG for reproducibility - use different seeds for numpy and pymoo
     np_state = np.random.get_state()
     try:
-        np.random.seed(rng.integers(0, 2**32 - 1, dtype=np.uint32))
-        res = minimize(problem, algo, termination, seed=rng.integers(0, 2**32 - 1), save_history=False, verbose=False)
+        # Generate two different seeds from the provided RNG
+        np_seed = rng.integers(0, 2**32 - 1, dtype=np.uint32)
+        pymoo_seed = rng.integers(0, 2**32 - 1)
+        np.random.seed(np_seed)
+        res = minimize(problem, algo, termination, seed=pymoo_seed, save_history=False, verbose=False)
     finally:
         np.random.set_state(np_state)
 
@@ -216,12 +219,17 @@ def run_nsga_for_curve(
         if cfg.n_workers_eval and cfg.n_workers_eval > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=cfg.n_workers_eval) as ex:
-                futs = [ex.submit(_run_nsga_for_seed, mech, target_curve, cfg, rng) for mech in group]
+                # Create a separate RNG for each mechanism to ensure diversity
+                futs = [ex.submit(_run_nsga_for_seed, mech, target_curve, cfg,
+                                 np.random.default_rng(rng.integers(0, 2**32 - 1)))
+                       for mech in group]
                 for f in as_completed(futs):
                     results.append(f.result())
         else:
             for mech in group:
-                results.append(_run_nsga_for_seed(mech, target_curve, cfg, rng))
+                # Create a separate RNG for each mechanism to ensure diversity
+                mech_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
+                results.append(_run_nsga_for_seed(mech, target_curve, cfg, mech_rng))
 
         print(f"[NSGA] group n={n:>2d}  seeds={len(group)}  done", flush=True)
 

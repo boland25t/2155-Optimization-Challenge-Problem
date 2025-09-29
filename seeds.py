@@ -99,14 +99,15 @@ class MechanismSeeder:
 
     def _gen_one(self) -> Dict[str, Any]:
         """
-        Generate a single valid mechanism using the library’s rejection-sampling
+        Generate a single valid mechanism using the library's rejection-sampling
         (tries up to cfg.max_tries_per_mech with cfg.n_tests_per_mech x0 candidates).
         """
-        # Important: use numpy’s global random state for the library calls.
+        # Important: use numpy's global random state for the library calls.
         # The library itself calls np.random.*; we set the bitgen for determinism.
         state = np.random.get_state()
         try:
             # bridge our Generator seed into legacy np.random.* used internally
+            # CRITICAL: Generate a fresh random seed for each mechanism to ensure diversity
             np.random.seed(self._rng.integers(0, 2**32 - 1, dtype=np.uint32))
             mech = self._randomizer(
                 n=None,  # let it pick uniformly in [min_nodes, max_nodes]

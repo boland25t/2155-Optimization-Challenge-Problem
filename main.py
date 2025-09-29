@@ -31,9 +31,17 @@ def pack_one_curve_for_grader(refined_list: List[Dict[str, Any]]) -> List[Dict[s
         })
     return out
 
-def optimize_one_curve(curve_idx, curve, s_cfg, n_cfg, b_cfg):
+def optimize_one_curve(curve_idx, curve, s_cfg, n_cfg, b_cfg, base_seed=None):
     print(f"\n=== Curve {curve_idx} ===")
     t0 = time.time()
+
+    # Create curve-specific configs with different seeds if base_seed provided
+    if base_seed is not None:
+        rng = np.random.default_rng(base_seed)
+        # Create new configs with curve-specific seeds
+        s_cfg = SeederConfig(**{**s_cfg.__dict__, 'seed': rng.integers(0, 2**32-1)})
+        n_cfg = NSGAConfig(**{**n_cfg.__dict__, 'seed': rng.integers(0, 2**32-1)})
+        b_cfg = BFGSConfig(**{**b_cfg.__dict__, 'seed': rng.integers(0, 2**32-1)})
 
     # 1) Seeds
     seeder = MechanismSeeder(s_cfg)
@@ -105,8 +113,14 @@ if __name__ == "__main__":
     else:
         submission = {f"Problem {i}": [] for i in range(1, 7)}
 
+    # Use a master seed to generate curve-specific seeds for better diversity
+    master_seed = 42  # You can change this to any value for different runs
+    master_rng = np.random.default_rng(master_seed)
+
     for i, curve in enumerate(target_curves):
-        packed = optimize_one_curve(i, curve, s_cfg, n_cfg, b_cfg)   # <= returns LIST already
+        # Generate a unique base seed for each curve
+        curve_base_seed = master_rng.integers(0, 2**32-1)
+        packed = optimize_one_curve(i, curve, s_cfg, n_cfg, b_cfg, base_seed=curve_base_seed)   # <= returns LIST already
         # If your optimize_one_curve currently returns 'packed' as list of dicts, just append it:
         # Ensure key names are "Problem 1".."Problem 6"
         submission[f"Problem {i+1}"] = packed
